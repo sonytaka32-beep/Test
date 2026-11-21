@@ -828,15 +828,35 @@ def fetch_metadata(url: str, *, cookie_file: Path | None = None) -> VideoMeta:
         cmd += ["--cookies", str(cookie_file)]
     cmd.append(url)
 
-    proc = _run(cmd, timeout=TIMEOUT_METADATA, what="ambil metadata")
-    if proc.returncode != 0:
-        error = proc.stderr or proc.stdout
-        if _is_bot_check(error):
+    last_error = ""
+    proc = None
+    for attempt, attempt_cmd in enumerate(_with_fallbacks(cmd), start=1):
+        proc = _run(attempt_cmd, timeout=TIMEOUT_METADATA, what="ambil metadata")
+        if proc.returncode == 0:
+            break
+        last_error = proc.stderr or proc.stdout
+        if attempt == 1 and not _should_try_other_client(last_error):
+            break
+
+    if proc is None or proc.returncode != 0:
+        if _is_bot_check(last_error):
             raise DownloadError(
-                "YouTube meminta verifikasi bot untuk server ini. "
-                "Tambahkan cookies YouTube di sidebar (lihat README)."
+                "YouTube meminta verifikasi bot untuk server ini setelah mencoba client "
+                "cadangan. Hapus cookies sesi jika baru ditambahkan; jika perlu gunakan "
+                "cookies YouTube yang masih valid dari akun Anda sendiri."
             )
-        raise DownloadError(f"Gagal membaca video: {_clean_stderr(error)}")
+        if _is_no_formats(last_error):
+            raise DownloadError(
+                "YouTube tidak menyediakan format video untuk client yang dicoba. "
+                "Jika cookies baru ditambahkan, hapus dulu lalu coba sekali tanpa cookies; "
+                "ini belum membuktikan file cookies rusak."
+            )
+        if _is_http_403(last_error):
+            raise DownloadError(
+                "YouTube menolak permintaan metadata (HTTP 403) meski client cadangan "
+                "sudah dicoba. Cookies belum tentu dapat mengatasi blokir server."
+            )
+        raise DownloadError(f"Gagal membaca video: {_clean_stderr(last_error)}")
 
     line = next((ln for ln in reversed(proc.stdout.splitlines()) if ln.strip()), "")
     if not line:
