@@ -729,6 +729,16 @@ def _is_bot_check(text: str) -> bool:
     return any(hint in lowered for hint in _BOT_HINTS)
 
 
+def _is_rate_limited(text: str) -> bool:
+    """Kenali penolakan HTTP 429 agar tidak dilabeli keliru sebagai subtitle hilang."""
+    lowered = (text or "").lower()
+    return "429" in lowered and (
+        "too many requests" in lowered
+        or "http error 429" in lowered
+        or "http 429" in lowered
+    )
+
+
 def _run(
     cmd: Sequence[str],
     *,
@@ -872,8 +882,16 @@ def download_transcript(
 
     if _is_bot_check(last_error):
         raise TranscriptError(
-            "YouTube meminta verifikasi bot. Tambahkan cookies YouTube di sidebar, "
-            "atau coba lagi beberapa saat."
+            "YouTube meminta verifikasi bot untuk permintaan subtitle. Cookies YouTube "
+            "mungkin membantu; jika tetap gagal, coba mode Timestamp manual atau "
+            "tunggu sebelum mencoba lagi."
+        )
+    if _is_rate_limited(last_error):
+        raise TranscriptError(
+            "YouTube membatasi permintaan subtitle dari server aplikasi (HTTP 429). "
+            "Ini bukan masalah API key AI dan biasanya tidak bisa diperbaiki dengan "
+            "mengulang berkali-kali. Tunggu sebelum mencoba lagi atau gunakan mode "
+            "Timestamp manual; mode AI perlu subtitle yang berhasil diunduh."
         )
     raise TranscriptError(
         "Video ini tidak punya subtitle (manual/otomatis). "

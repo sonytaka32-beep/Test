@@ -9,6 +9,9 @@ import pytest
 st = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+import app  # noqa: E402
+import pipeline  # noqa: E402
+
 APP = Path(__file__).resolve().parents[1] / "app.py"
 
 
@@ -46,6 +49,16 @@ def test_app_rejects_non_youtube_url():
     at.button[0].click().run()
     assert not at.exception
     assert any("youtube" in str(err.value).lower() for err in at.error)
+
+
+def test_humanize_transcript_error_does_not_mislabel_http_429():
+    error = pipeline.TranscriptError(
+        "YouTube membatasi permintaan subtitle (HTTP 429); gunakan Timestamp manual."
+    )
+    message = app._humanize_error(error)
+    assert "HTTP 429" in message
+    assert "API key AI" not in message
+    assert "pilih video yang punya subtitle" not in message
 
 
 def test_app_requires_api_key_in_ai_mode():

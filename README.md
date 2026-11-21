@@ -79,7 +79,7 @@ Tes unit dan smoke-test UI tidak memanggil YouTube atau provider AI. GitHub Acti
 
 - Hanya URL domain YouTube yang diterima.
 - Mode AI memerlukan subtitle track yang dapat diunduh; tersedia mode timestamp manual sebagai alternatif.
-- Server YouTube bisa membatasi IP cloud atau mengubah cara akses subtitle/video. Error 429/anti-bot bukan berarti API key AI bermasalah.
+- Server YouTube bisa membatasi IP cloud atau mengubah cara akses subtitle/video. Error HTTP 429 berarti permintaan subtitle dibatasi YouTube, bukan berarti subtitle pasti tidak ada atau API key AI bermasalah. Jangan mengulang berkali-kali; tunggu, atau gunakan mode Timestamp manual (tetap perlu unduhan bagian video dari YouTube).
 - Video diunduh/diproses oleh server, sehingga perlu mempertimbangkan kuota, ruang sementara, batas ukuran upload/download, dan ketentuan layanan YouTube serta hak cipta. Gunakan hanya konten yang Anda miliki atau berhak proses.
 - Waktu FFmpeg CPU dapat lama; batas Streamlit Community Cloud dapat berubah. Uji di hosting target sebelum membuka aplikasi untuk umum.
 - Aplikasi ini tidak menyimpan arsip permanen. API key dan cookies yang dimasukkan di widget berada di state sesi server sampai dihapus dengan tombol sidebar atau sesi berakhir. Hasil klip juga tetap ada di state sesi server untuk preview/download sampai ditekan **Bersihkan hasil** atau sesi berakhir. Jangan gunakan kredensial YouTube sensitif pada aplikasi publik yang tidak Anda kendalikan.

@@ -316,10 +316,7 @@ def _process(
 def _humanize_error(exc: Exception) -> str:
     message = str(exc) or exc.__class__.__name__
     if isinstance(exc, pipeline.TranscriptError):
-        return (
-            f"{message}\n\n**Solusi:** pilih video yang punya subtitle, "
-            "atau gunakan mode **Timestamp manual**."
-        )
+        return message
     if isinstance(exc, pipeline.DownloadError):
         return f"{message}\n\n**Solusi:** isi Cookies YouTube di sidebar, lalu coba lagi."
     if isinstance(exc, pipeline.AIError):

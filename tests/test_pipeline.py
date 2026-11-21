@@ -86,6 +86,32 @@ def test_parse_vtt_empty_and_garbage():
     assert pipeline.parse_vtt("bukan subtitle sama sekali") == []
 
 
+def test_download_transcript_reports_rate_limit_separately(monkeypatch, tmp_path):
+    calls = []
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "ERROR: Unable to download video subtitles: HTTP Error 429: Too Many Requests"
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return Result()
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+
+    with pytest.raises(
+        pipeline.TranscriptError,
+        match="membatasi permintaan subtitle.*HTTP 429",
+    ) as exc:
+        pipeline.download_transcript("https://youtu.be/abc123", tmp_path)
+
+    assert len(calls) == 1  # Jangan lanjutkan fallback yang menambah beban setelah 429.
+    assert "Timestamp manual" in str(exc.value)
+    assert "bukan masalah API key AI" in str(exc.value)
+    assert "tidak punya subtitle" not in str(exc.value)
+
+
 def test_build_transcript_has_seekable_timestamps():
     cues = [
         pipeline.Cue(0.0, 3.0, "awal"),
