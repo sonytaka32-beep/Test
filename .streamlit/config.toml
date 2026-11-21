@@ -1,0 +1,10 @@
+[theme]
+primaryColor = "#ff2d2d"
+base = "light"
+
+[server]
+# Aplikasi ini tidak menerima upload file; batas body dibuat konservatif.
+maxUploadSize = 100
+
+[browser]
+gatherUsageStats = false

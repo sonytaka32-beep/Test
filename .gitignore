@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Streamlit secrets (JANGAN pernah di-commit)
+.streamlit/secrets.toml
+
+# Hasil kerja sementara
+*.mp4
+*.vtt
+*.part
+temp_subs*
