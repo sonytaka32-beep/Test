@@ -48,6 +48,11 @@ YTDLP_BIN = os.environ.get("SONYBAE_YTDLP", "yt-dlp")
 FFMPEG_BIN = os.environ.get("SONYBAE_FFMPEG", "ffmpeg")
 FFPROBE_BIN = os.environ.get("SONYBAE_FFPROBE", "ffprobe")
 
+# Client YouTube: hindari web_embedded (403 karena PO token per-video), lalu
+# fallback ke client lain bila percobaan pertama tetap ditolak.
+PLAYER_CLIENTS_PRIMARY = "default,-web_embedded"
+PLAYER_CLIENTS_FALLBACK = "tv,web_safari"
+
 # Demi keamanan (anti-SSRF), hanya URL YouTube yang diterima.
 ALLOWED_HOSTS = {
     "youtube.com",
@@ -749,6 +754,11 @@ def _is_no_formats(text: str) -> bool:
     return "requested format is not available" in (text or "").lower()
 
 
+def _should_try_other_client(text: str) -> bool:
+    """Error yang bisa berubah bila client/player YouTube diganti."""
+    return _is_bot_check(text) or _is_http_403(text) or _is_no_formats(text)
+
+
 def _run(
     cmd: Sequence[str],
     *,
@@ -845,8 +855,15 @@ def fetch_metadata(url: str, *, cookie_file: Path | None = None) -> VideoMeta:
 
 
 def _with_fallbacks(cmd: list[str]) -> list[list[str]]:
-    """Susun percobaan pertama + fallback player client bila kena bot-check."""
-    return [cmd, cmd + ["--extractor-args", "youtube:player_client=tv,web_safari"]]
+    """Percobaan utama + fallback player client.
+
+    ``web_embedded`` dikecualikan karena YouTube membatasi client itu dengan PO
+    token video-specific dan mengembalikan HTTP 403 (yt-dlp issue #17989).
+    """
+    return [
+        [*cmd, "--extractor-args", f"youtube:player_client={PLAYER_CLIENTS_PRIMARY}"],
+        [*cmd, "--extractor-args", f"youtube:player_client={PLAYER_CLIENTS_FALLBACK}"],
+    ]
 
 
 def download_transcript(
@@ -887,7 +904,7 @@ def download_transcript(
         last_error = proc.stderr or proc.stdout
         if proc.returncode == 0:
             break
-        if attempt == 1 and not _is_bot_check(last_error):
+        if attempt == 1 and not _should_try_other_client(last_error):
             break
 
     if _is_bot_check(last_error):
@@ -959,7 +976,7 @@ def download_section(
         if output.exists() and output.stat().st_size > 50_000:
             return output
         last_error = proc.stderr or proc.stdout
-        if attempt == 1 and not _is_bot_check(last_error):
+        if attempt == 1 and not _should_try_other_client(last_error):
             break
 
     if _is_bot_check(last_error):
@@ -975,10 +992,10 @@ def download_section(
         )
     if _is_http_403(last_error):
         raise DownloadError(
-            "YouTube menolak akses ke stream video (HTTP 403), bahkan setelah aplikasi "
-            "memilih format HTTPS langsung. Tunggu sebentar, coba lagi, atau gunakan "
-            "cookies YouTube milik Anda sendiri. Jika tetap gagal, akses unduhan dari "
-            "server Streamlit sedang ditolak YouTube."
+            "YouTube menolak akses ke stream video (HTTP 403), meski aplikasi sudah "
+            "mencoba client YouTube lain dan format HTTPS langsung. Tunggu sebentar, "
+            "coba lagi, atau gunakan cookies YouTube milik Anda sendiri. Jika tetap "
+            "gagal, akses unduhan dari server Streamlit sedang ditolak YouTube."
         )
     raise DownloadError(f"Gagal mengunduh potongan video: {_clean_stderr(last_error)}")
 

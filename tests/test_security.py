@@ -124,6 +124,40 @@ def test_download_section_reports_missing_formats_without_blaming_cookies(monkey
     assert "--list-formats" not in str(exc.value)
 
 
+def test_player_clients_exclude_web_embedded_and_keep_fallback():
+    attempts = pipeline._with_fallbacks(["yt-dlp", "URL"])
+    args = [cmd[cmd.index("--extractor-args") + 1] for cmd in attempts]
+
+    assert len(attempts) == 2
+    # "-web_embedded" berarti client itu dikeluarkan, bukan dipakai.
+    assert args[0] == f"youtube:player_client={pipeline.PLAYER_CLIENTS_PRIMARY}"
+    assert args[0].endswith("-web_embedded")
+    assert args[1] == f"youtube:player_client={pipeline.PLAYER_CLIENTS_FALLBACK}"
+    assert args[0] != args[1]
+
+
+def test_download_section_retries_with_other_client_on_403(monkeypatch, tmp_path):
+    (tmp_path / "source.mp4").unlink(missing_ok=True)
+    seen = []
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "[https] HTTP error 403 Forbidden (access denied)"
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd[cmd.index("--extractor-args") + 1])
+        return Result()
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+
+    with pytest.raises(pipeline.DownloadError):
+        pipeline.download_section("https://youtu.be/abc123", tmp_path, 10, 20)
+
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+
+
 def test_make_client_validates_before_constructing_openai(monkeypatch):
     called = {"value": False}
 
