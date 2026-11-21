@@ -48,10 +48,11 @@ YTDLP_BIN = os.environ.get("SONYBAE_YTDLP", "yt-dlp")
 FFMPEG_BIN = os.environ.get("SONYBAE_FFMPEG", "ffmpeg")
 FFPROBE_BIN = os.environ.get("SONYBAE_FFPROBE", "ffprobe")
 
-# Client YouTube: hindari web_embedded (403 karena PO token per-video), lalu
-# fallback ke client lain bila percobaan pertama tetap ditolak.
-PLAYER_CLIENTS_PRIMARY = "default,-web_embedded"
-PLAYER_CLIENTS_FALLBACK = "tv,web_safari"
+# Client YouTube: `default` untuk cookie dan pengguna awam, lalu
+# `default,web_embedded` sebagai fallback bila halaman perlu dimuat ulang
+# karena cookie (yt-dlp #17389).
+PLAYER_CLIENTS_PRIMARY = "default"
+PLAYER_CLIENTS_FALLBACK = "default,web_embedded"
 
 # Demi keamanan (anti-SSRF), hanya URL YouTube yang diterima.
 ALLOWED_HOSTS = {
@@ -749,6 +750,11 @@ def _is_http_403(text: str) -> bool:
     return "403" in lowered and ("forbidden" in lowered or "access denied" in lowered)
 
 
+def _is_page_needs_reload(text: str) -> bool:
+    """Kenali penolakan YouTube yang perlu refresh halaman (sesuai yt-dlp #17389)."""
+    return "the page needs to be reloaded" in (text or "").lower()
+
+
 def _is_no_formats(text: str) -> bool:
     """YouTube tidak menyediakan format yang cocok dengan selektor kita."""
     return "requested format is not available" in (text or "").lower()
@@ -756,7 +762,12 @@ def _is_no_formats(text: str) -> bool:
 
 def _should_try_other_client(text: str) -> bool:
     """Error yang bisa berubah bila client/player YouTube diganti."""
-    return _is_bot_check(text) or _is_http_403(text) or _is_no_formats(text)
+    return (
+        _is_bot_check(text)
+        or _is_http_403(text)
+        or _is_no_formats(text)
+        or _is_page_needs_reload(text)
+    )
 
 
 def _run(
@@ -877,8 +888,9 @@ def fetch_metadata(url: str, *, cookie_file: Path | None = None) -> VideoMeta:
 def _with_fallbacks(cmd: list[str]) -> list[list[str]]:
     """Percobaan utama + fallback player client.
 
-    ``web_embedded`` dikecualikan karena YouTube membatasi client itu dengan PO
-    token video-specific dan mengembalikan HTTP 403 (yt-dlp issue #17989).
+    Saat cookie disertakan, yt-dlp biasanya memakai `tv_downgraded`, yang
+    memicu "The page needs to be reloaded" pada beberapa video YouTube
+    (yt-dlp #17389). Gunakan `default` dulu, lalu `default,web_embedded`.
     """
     return [
         [*cmd, "--extractor-args", f"youtube:player_client={PLAYER_CLIENTS_PRIMARY}"],

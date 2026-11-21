@@ -129,11 +129,11 @@ def test_player_clients_exclude_web_embedded_and_keep_fallback():
     args = [cmd[cmd.index("--extractor-args") + 1] for cmd in attempts]
 
     assert len(attempts) == 2
-    # "-web_embedded" berarti client itu dikeluarkan, bukan dipakai.
     assert args[0] == f"youtube:player_client={pipeline.PLAYER_CLIENTS_PRIMARY}"
-    assert args[0].endswith("-web_embedded")
     assert args[1] == f"youtube:player_client={pipeline.PLAYER_CLIENTS_FALLBACK}"
     assert args[0] != args[1]
+    assert args[0] == "youtube:player_client=default"
+    assert args[1] == "youtube:player_client=default,web_embedded"
 
 
 def test_download_section_retries_with_other_client_on_403(monkeypatch, tmp_path):

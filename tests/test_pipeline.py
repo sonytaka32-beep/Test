@@ -112,10 +112,12 @@ def test_fetch_metadata_retries_with_fallback_client_on_missing_formats(monkeypa
     second_client_arg = calls[1].index("--extractor-args")
     assert calls[0][first_client_arg - 1] == "https://youtu.be/abc123"
     assert calls[1][second_client_arg - 1] == "https://youtu.be/abc123"
-    assert calls[0][first_client_arg + 1].endswith("-web_embedded")
+    assert calls[0][first_client_arg + 1] == f"youtube:player_client={pipeline.PLAYER_CLIENTS_PRIMARY}"
+    assert calls[0][first_client_arg + 1] == "youtube:player_client=default"
     assert calls[1][second_client_arg + 1] == (
         f"youtube:player_client={pipeline.PLAYER_CLIENTS_FALLBACK}"
     )
+    assert calls[1][second_client_arg + 1] == "youtube:player_client=default,web_embedded"
     assert meta.title == "Video OK"
     assert meta.duration == 79.5
 
@@ -136,6 +138,36 @@ def test_fetch_metadata_missing_formats_error_does_not_blame_cookies(monkeypatch
     assert len(calls) == 2
     assert "hapus dulu" in str(exc.value)
     assert "rusak" in str(exc.value)
+
+
+def test_fetch_metadata_page_needs_reload_retries_with_fallback(monkeypatch):
+    calls = []
+
+    class Result:
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if len(calls) == 1:
+            return Result(
+                1,
+                stderr="ERROR: The page needs to be reloaded.",
+            )
+        return Result(0, "79.5\tVideo OK\tFalse\n")
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    meta = pipeline.fetch_metadata("https://youtu.be/abc123")
+
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("--extractor-args") + 1].endswith("default")
+    assert calls[1][calls[1].index("--extractor-args") + 1] == (
+        f"youtube:player_client={pipeline.PLAYER_CLIENTS_FALLBACK}"
+    )
+    assert meta.title == "Video OK"
+    assert meta.duration == 79.5
 
 
 def test_download_transcript_reports_rate_limit_separately(monkeypatch, tmp_path):
