@@ -80,7 +80,25 @@ def test_yt_dlp_format_fallback_is_height_limited(monkeypatch, tmp_path):
     output = pipeline.download_section("https://youtu.be/abc123", tmp_path, 10, 20, max_height=720)
     fmt = captured["cmd"][captured["cmd"].index("-f") + 1]
     assert output.exists()
-    assert all("height<=720" in alternative for alternative in fmt.split("/"))
+    assert fmt == "b[protocol=https][height<=720]"
+    assert "--download-sections" in captured["cmd"]
+
+
+def test_download_section_explains_http_403_after_https_format(monkeypatch, tmp_path):
+    (tmp_path / "source.mp4").unlink(missing_ok=True)
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "[hls] Opening segment: HTTP error 403 Forbidden (access denied)"
+
+    monkeypatch.setattr(pipeline, "_run", lambda *args, **kwargs: Result())
+
+    with pytest.raises(pipeline.DownloadError, match="HTTP 403") as exc:
+        pipeline.download_section("https://youtu.be/abc123", tmp_path, 10, 20)
+
+    assert "format HTTPS langsung" in str(exc.value)
+    assert "server Streamlit" in str(exc.value)
 
 
 def test_make_client_validates_before_constructing_openai(monkeypatch):

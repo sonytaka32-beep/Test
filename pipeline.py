@@ -739,6 +739,11 @@ def _is_rate_limited(text: str) -> bool:
     )
 
 
+def _is_http_403(text: str) -> bool:
+    lowered = (text or "").lower()
+    return "403" in lowered and ("forbidden" in lowered or "access denied" in lowered)
+
+
 def _run(
     cmd: Sequence[str],
     *,
@@ -911,11 +916,10 @@ def download_section(
     """Unduh HANYA potongan video yang dibutuhkan (bukan video penuh)."""
     output = workdir / "source.mp4"
     section = f"*{format_timestamp(start, millis=True)}-{format_timestamp(end, millis=True)}"
-    fmt = (
-        f"bv*[height<={max_height}][ext=mp4]+ba[ext=m4a]/"
-        f"bv*[height<={max_height}]+ba/"
-        f"b[height<={max_height}]"
-    )
+    # Pilih satu stream HTTPS yang sudah memuat audio+video. Ini menghindari HLS
+    # yang diambil oleh FFmpeg saat --download-sections memotong stream langsung.
+    # Konsekuensi: kualitas dibatasi format progressive/muxed yang tersedia.
+    fmt = f"b[protocol=https][height<={max_height}]"
     base = [
         *ytdlp_base(),
         "--no-warnings",
@@ -953,6 +957,13 @@ def download_section(
         raise DownloadError(
             "YouTube menolak unduhan dari server ini (verifikasi bot). "
             "Tambahkan cookies YouTube di panel sidebar."
+        )
+    if _is_http_403(last_error):
+        raise DownloadError(
+            "YouTube menolak akses ke stream video (HTTP 403), bahkan setelah aplikasi "
+            "memilih format HTTPS langsung. Tunggu sebentar, coba lagi, atau gunakan "
+            "cookies YouTube milik Anda sendiri. Jika tetap gagal, akses unduhan dari "
+            "server Streamlit sedang ditolak YouTube."
         )
     raise DownloadError(f"Gagal mengunduh potongan video: {_clean_stderr(last_error)}")
 
