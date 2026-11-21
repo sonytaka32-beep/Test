@@ -744,6 +744,11 @@ def _is_http_403(text: str) -> bool:
     return "403" in lowered and ("forbidden" in lowered or "access denied" in lowered)
 
 
+def _is_no_formats(text: str) -> bool:
+    """YouTube tidak menyediakan format yang cocok dengan selektor kita."""
+    return "requested format is not available" in (text or "").lower()
+
+
 def _run(
     cmd: Sequence[str],
     *,
@@ -916,10 +921,14 @@ def download_section(
     """Unduh HANYA potongan video yang dibutuhkan (bukan video penuh)."""
     output = workdir / "source.mp4"
     section = f"*{format_timestamp(start, millis=True)}-{format_timestamp(end, millis=True)}"
-    # Pilih satu stream HTTPS yang sudah memuat audio+video. Ini menghindari HLS
-    # yang diambil oleh FFmpeg saat --download-sections memotong stream langsung.
-    # Konsekuensi: kualitas dibatasi format progressive/muxed yang tersedia.
-    fmt = f"b[protocol=https][height<={max_height}]"
+    # Preferasikan video dan audio terpisah via HTTPS (format DASH direct) lalu
+    # satu format muxed HTTPS. Jangan fallback ke HLS: FFmpeg section downloader
+    # dapat ditolak YouTube saat membuka segmen HLS. Ini mungkin gagal jika YouTube
+    # tidak menyediakan format HTTPS untuk client/server ini.
+    fmt = (
+        f"bv[protocol^=https][height<={max_height}]+ba[protocol^=https]/"
+        f"b[protocol^=https][height<={max_height}]"
+    )
     base = [
         *ytdlp_base(),
         "--no-warnings",
@@ -957,6 +966,12 @@ def download_section(
         raise DownloadError(
             "YouTube menolak unduhan dari server ini (verifikasi bot). "
             "Tambahkan cookies YouTube di panel sidebar."
+        )
+    if _is_no_formats(last_error):
+        raise DownloadError(
+            "YouTube tidak menyediakan format video HTTPS yang bisa dipakai server ini. "
+            "Ini pembatasan dari YouTube (termasuk token/PO token), bukan karena cookies "
+            "salah format. Coba video lain, atau coba lagi nanti."
         )
     if _is_http_403(last_error):
         raise DownloadError(

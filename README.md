@@ -79,7 +79,7 @@ Tes unit dan smoke-test UI tidak memanggil YouTube atau provider AI. GitHub Acti
 
 - Hanya URL domain YouTube yang diterima.
 - Mode AI memerlukan subtitle track yang dapat diunduh; tersedia mode timestamp manual sebagai alternatif.
-- Unduhan klip memilih format HTTPS progressive (audio+video dalam satu stream) agar FFmpeg tidak mengambil potongan HLS langsung; kualitas maksimum bisa lebih rendah dan bergantung pada format yang tersedia.
+- Unduhan klip memilih stream HTTPS (video+audio terpisah atau satu stream muxed) agar FFmpeg tidak mengambil potongan HLS langsung; jika YouTube tidak menyediakan format HTTPS untuk server tersebut, proses berhenti dengan pesan yang jelas. Kualitas maksimum bergantung pada format yang tersedia.
 - Server YouTube bisa membatasi IP cloud atau mengubah cara akses subtitle/video. Error HTTP 429 berarti permintaan subtitle dibatasi YouTube, bukan berarti subtitle pasti tidak ada atau API key AI bermasalah. Error HTTP 403 saat unduh video berarti YouTube menolak akses stream dari server; jangan mengulang berkali-kali, coba lagi setelah jeda atau cookie milik akun sendiri.
 - Video diunduh/diproses oleh server, sehingga perlu mempertimbangkan kuota, ruang sementara, batas ukuran upload/download, dan ketentuan layanan YouTube serta hak cipta. Gunakan hanya konten yang Anda miliki atau berhak proses.
 - Waktu FFmpeg CPU dapat lama; batas Streamlit Community Cloud dapat berubah. Uji di hosting target sebelum membuka aplikasi untuk umum.
