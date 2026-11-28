@@ -12,7 +12,7 @@ import streamlit as st
 
 import pipeline
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 MODE_SUBTITLE = "AI pilih momen (subtitle YouTube)"
 MODE_VISUAL = "AI visual (tanpa subtitle)"
@@ -21,6 +21,8 @@ MODE_TIMESTAMP = "Timestamp manual"
 
 MODE_CHOICES = [MODE_SUBTITLE, MODE_VISUAL, MODE_MANUAL_TRANSCRIPT, MODE_TIMESTAMP]
 AI_MODES = (MODE_SUBTITLE, MODE_VISUAL, MODE_MANUAL_TRANSCRIPT)
+VISUAL_MAX_MINUTES = 12
+VISUAL_MAX_SIZE_MB = 300
 
 PRESETS: dict[str, dict[str, str]] = {
     "OpenAI": {
@@ -254,14 +256,21 @@ def _run_job(
             st.write(f"Potongan manual: {moment.start_label} - {moment.end_label}")
         elif mode == MODE_VISUAL:
             st.write("Mengunduh video sementara untuk analisis visual (tanpa subtitle)...")
-            source_path = pipeline.download_source_video(
+            download_video = getattr(pipeline, "download_source_video", None)
+            analyze_frames = getattr(pipeline, "analyze_video_frames", None)
+            if not callable(download_video) or not callable(analyze_frames):
+                raise pipeline.DownloadError(
+                    "Komponen mode AI visual belum termuat di server. "
+                    "Buka Manage app → Reboot app, lalu muat ulang halaman."
+                )
+            source_path = download_video(
                 url,
                 job,
                 expected_duration=meta.duration,
                 cookie_file=cookie_file,
             )
             local_source = source_path
-            moment = pipeline.analyze_video_frames(
+            moment = analyze_frames(
                 source_path,
                 api_key=cfg["api_key"],
                 model=cfg["model"],
@@ -463,9 +472,15 @@ def main() -> None:
     run_clicked = st.button("🚀 Proses Klip Viral SONYBAE!", type="primary")
 
     if mode == MODE_VISUAL:
+        analysis_limit_minutes = getattr(
+            pipeline, "MAX_VIDEO_ANALYSIS_MINUTES", VISUAL_MAX_MINUTES
+        )
+        analysis_limit_bytes = getattr(
+            pipeline, "MAX_VIDEO_ANALYSIS_BYTES", VISUAL_MAX_SIZE_MB * 1024 * 1024
+        )
         st.caption(
-            f"Mode ini mengunduh sementara seluruh video (maks. {pipeline.MAX_VIDEO_ANALYSIS_MINUTES} menit / "
-            f"{pipeline.MAX_VIDEO_ANALYSIS_BYTES // (1024 * 1024)} MB), mengirim frame sampel saja ke model vision, "
+            f"Mode ini mengunduh sementara seluruh video (maks. {analysis_limit_minutes} menit / "
+            f"{analysis_limit_bytes // (1024 * 1024)} MB), mengirim frame sampel saja ke model vision, "
             "lalu memotong dari file lokal itu. File sumber dibuang setelah proses."
         )
     else:

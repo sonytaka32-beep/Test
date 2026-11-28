@@ -42,6 +42,39 @@ def test_app_has_configuration_widgets():
     ]
 
 
+def test_visual_mode_shows_fallback_caption_if_server_pipeline_is_stale(monkeypatch):
+    monkeypatch.delattr(pipeline, "MAX_VIDEO_ANALYSIS_MINUTES", raising=False)
+    monkeypatch.delattr(pipeline, "MAX_VIDEO_ANALYSIS_BYTES", raising=False)
+
+    at = _fresh_app().run()
+    at.radio[0].set_value("AI visual (tanpa subtitle)").run()
+
+    assert not at.exception
+    assert any("maks. 12 menit / 300 MB" in str(item.value) for item in at.caption)
+
+
+def test_visual_mode_reports_missing_pipeline_functions_clearly(monkeypatch):
+    monkeypatch.delattr(pipeline, "download_source_video", raising=False)
+    monkeypatch.delattr(pipeline, "analyze_video_frames", raising=False)
+    monkeypatch.setattr(
+        pipeline,
+        "fetch_metadata",
+        lambda url, **kwargs: pipeline.VideoMeta(title="Test", duration=300),
+    )
+    monkeypatch.setattr(pipeline, "cleanup_stale_jobs", lambda: None)
+
+    at = _fresh_app().run()
+    at.radio[0].set_value("AI visual (tanpa subtitle)").run()
+    at.text_input[0].set_value("https://youtu.be/abc123")
+    api_key = next(widget for widget in at.sidebar.text_input if widget.label == "API Key")
+    api_key.set_value("test-key")
+    at.run()
+    next(button for button in at.button if button.label.startswith("🚀")).click().run()
+
+    assert not at.exception
+    assert any("Komponen mode AI visual belum termuat" in str(item.value) for item in at.error)
+
+
 def test_visual_mode_hides_transcript_box_and_requires_key():
     at = _fresh_app().run()
     at.radio[0].set_value("AI visual (tanpa subtitle)").run()
