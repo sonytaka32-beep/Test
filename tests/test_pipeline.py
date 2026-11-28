@@ -196,6 +196,25 @@ def test_download_transcript_reports_rate_limit_separately(monkeypatch, tmp_path
     assert "tidak punya subtitle" not in str(exc.value)
 
 
+def test_normalize_pasted_timestamped_transcript():
+    raw = "[00:01:23] Halo <b>semua</b>\n01:02:03.500 - Ucapan berikut"
+    assert pipeline.normalize_transcript_text(raw) == (
+        "[00:01:23] Halo semua\n[01:02:03] Ucapan berikut"
+    )
+
+
+def test_normalize_pasted_vtt_and_srt_transcripts():
+    assert pipeline.normalize_transcript_text(SAMPLE_VTT).startswith("[00:00:00] baris satu")
+    srt = "1\n00:00:02,000 --> 00:00:03,000\nIsi subtitle\n"
+    assert pipeline.normalize_transcript_text(srt) == "[00:00:02] Isi subtitle"
+
+
+@pytest.mark.parametrize("raw", ["", "teks tanpa waktu", "[00:99:00] invalid"])
+def test_normalize_pasted_transcript_rejects_invalid_input(raw):
+    with pytest.raises(pipeline.TranscriptError):
+        pipeline.normalize_transcript_text(raw)
+
+
 def test_build_transcript_has_seekable_timestamps():
     cues = [
         pipeline.Cue(0.0, 3.0, "awal"),

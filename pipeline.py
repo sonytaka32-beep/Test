@@ -358,6 +358,51 @@ def build_transcript_text(cues: Sequence[Cue]) -> str:
     return "\n".join(lines)
 
 
+def normalize_transcript_text(raw: str) -> str:
+    """Validasi transkrip tempelan ber-timestamp, VTT, atau SRT.
+
+    Jalur ini memungkinkan pengguna memberi transkrip sendiri jika host cloud
+    sedang dibatasi YouTube. Setiap baris teks biasa harus memiliki timestamp
+    agar model bisa memilih momen yang benar.
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise TranscriptError("Tempel transkrip yang memiliki timestamp terlebih dahulu.")
+
+    cues = parse_vtt(text)
+    if cues:
+        return build_transcript_text(cues)
+
+    lines: list[str] = []
+    timestamped_line = re.compile(
+        r"^\s*\[?(?P<timestamp>\d{1,3}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\]?"
+        r"\s*(?:[-–|]\s*)?(?P<caption>\S.*)$"
+    )
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        match = timestamped_line.match(line)
+        if not match:
+            raise TranscriptError(
+                "Format transkrip tidak dikenali. Gunakan VTT/SRT atau satu baris "
+                "per ucapan dengan timestamp di depan, contoh: [00:01:23] isi ucapan."
+            )
+        try:
+            timestamp = format_timestamp(parse_timestamp(match.group("timestamp")))
+        except ValueError as exc:
+            raise TranscriptError(
+                f"Timestamp transkrip tidak valid: {match.group('timestamp')!r}."
+            ) from exc
+        caption = _clean_caption(match.group("caption"))
+        if caption:
+            lines.append(f"[{timestamp}] {caption}")
+
+    if not lines:
+        raise TranscriptError("Transkrip tidak berisi baris bertimestamp yang bisa dibaca.")
+    return "\n".join(lines)
+
+
 def chunk_transcript(
     text: str,
     *,

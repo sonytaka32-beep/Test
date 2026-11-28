@@ -34,6 +34,11 @@ def test_app_has_configuration_widgets():
     assert "Base URL" in labels
     assert "Model" in labels
     assert at.radio[0].value == "AI pilih momen"
+    assert list(at.radio[0].options) == [
+        "AI pilih momen",
+        "AI + transkrip manual",
+        "Timestamp manual",
+    ]
 
 
 def test_app_blocks_empty_url():

@@ -12,7 +12,7 @@ import streamlit as st
 
 import pipeline
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 PRESETS: dict[str, dict[str, str]] = {
     "OpenAI": {
@@ -220,6 +220,7 @@ def _run_job(
     clip_seconds: float,
     manual_start: str,
     manual_end: str,
+    transcript_text: str = "",
 ) -> None:
     with pipeline.job_dir() as job:
         cookie_file = _cookie_file(job)
@@ -241,8 +242,29 @@ def _run_job(
             )
             moment = pipeline.ClipMoment(start=start_s, end=end_s)
             st.write(f"Potongan manual: {moment.start_label} - {moment.end_label}")
+        elif mode == "AI + transkrip manual":
+            transcript = pipeline.normalize_transcript_text(transcript_text)
+            st.write(
+                f"Transkrip yang ditempel: {len(transcript.splitlines())} baris bertimestamp, "
+                f"~{len(transcript):,} karakter."
+            )
+            moment = pipeline.analyze_transcript(
+                transcript,
+                api_key=cfg["api_key"],
+                model=cfg["model"],
+                base_url=cfg["base_url"] or None,
+                clip_seconds=clip_seconds,
+                duration=meta.duration,
+                log=st.write,
+            )
+            st.write(
+                f"✅ Momen terpilih: **{moment.start_label} - {moment.end_label}**"
+                + (f" — {moment.title}" if moment.title else "")
+            )
+            if moment.reason:
+                st.write(f"Alasan: {moment.reason}")
         else:
-            st.write("Mengunduh transkrip subtitle...")
+            st.write("Mengunduh transkrip subtitle dari YouTube...")
             raw_vtt = pipeline.download_transcript(url, job, cookie_file=cookie_file)
             cues = pipeline.parse_vtt(raw_vtt)
             transcript = pipeline.build_transcript_text(cues)
@@ -300,13 +322,22 @@ def _process(
     clip_seconds: float,
     manual_start: str,
     manual_end: str,
+    transcript_text: str = "",
 ) -> None:
     st.session_state.pop("clip", None)
     pipeline.cleanup_stale_jobs()
 
     with st.status("Memproses klip SONYBAE...", expanded=True) as status:
         try:
-            _run_job(url, cfg, mode, clip_seconds, manual_start, manual_end)
+            _run_job(
+                url,
+                cfg,
+                mode,
+                clip_seconds,
+                manual_start,
+                manual_end,
+                transcript_text,
+            )
         except Exception:
             status.update(label="Gagal memproses", state="error", expanded=True)
             raise
@@ -352,14 +383,31 @@ def main() -> None:
 
     mode = st.radio(
         "Mode potong",
-        ["AI pilih momen", "Timestamp manual"],
+        ["AI pilih momen", "AI + transkrip manual", "Timestamp manual"],
         horizontal=True,
-        help="Mode manual berguna kalau video tidak punya subtitle otomatis.",
+        help=(
+            "Jika subtitle YouTube kena HTTP 429, pilih AI + transkrip manual "
+            "dan tempel transkrip bertimestamp dari file .vtt/.srt."
+        ),
     )
 
-    if mode == "AI pilih momen":
+    transcript_text = ""
+    if mode in ("AI pilih momen", "AI + transkrip manual"):
         clip_seconds = float(st.slider("Target durasi klip (detik)", 20, 90, 45, step=5))
         manual_start = manual_end = ""
+        if mode == "AI + transkrip manual":
+            transcript_text = st.text_area(
+                "Transkrip bertimestamp (VTT/SRT atau [00:01:23] ucapan)",
+                height=220,
+                placeholder=(
+                    "[00:01:23] Contoh ucapan pertama\n"
+                    "[00:02:10] Contoh ucapan berikutnya"
+                ),
+                help=(
+                    "Tempel subtitle dari transkrip yang Anda miliki/berhak gunakan. "
+                    "Setiap baris teks biasa perlu diawali timestamp."
+                ),
+            )
     else:
         clip_seconds = 45.0
         col_start, col_end = st.columns(2)
@@ -376,14 +424,22 @@ def main() -> None:
     if run_clicked:
         try:
             clean_url = pipeline.validate_url(url)
-            if mode == "AI pilih momen" and not cfg["api_key"]:
+            if mode in ("AI pilih momen", "AI + transkrip manual") and not cfg["api_key"]:
                 raise ValueError("API Key wajib diisi untuk mode AI.")
-            if mode == "AI pilih momen" and not cfg["model"]:
+            if mode in ("AI pilih momen", "AI + transkrip manual") and not cfg["model"]:
                 raise ValueError("Nama model wajib diisi untuk mode AI.")
-            if mode == "AI pilih momen" and cfg["base_url"]:
+            if mode in ("AI pilih momen", "AI + transkrip manual") and cfg["base_url"]:
                 # Validasi lebih awal agar endpoint custom tidak dapat menjadi SSRF.
                 pipeline.validate_base_url(cfg["base_url"])
-            _process(clean_url, cfg, mode, clip_seconds, manual_start, manual_end)
+            _process(
+                clean_url,
+                cfg,
+                mode,
+                clip_seconds,
+                manual_start,
+                manual_end,
+                transcript_text,
+            )
         except Exception as exc:  # noqa: BLE001 - semua error ditampilkan ke pengguna
             st.error(_humanize_error(exc))
             with st.expander("Log teknis"):
