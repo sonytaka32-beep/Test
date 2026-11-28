@@ -12,7 +12,15 @@ import streamlit as st
 
 import pipeline
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.0"
+
+MODE_SUBTITLE = "AI pilih momen (subtitle YouTube)"
+MODE_VISUAL = "AI visual (tanpa subtitle)"
+MODE_MANUAL_TRANSCRIPT = "AI + transkrip manual"
+MODE_TIMESTAMP = "Timestamp manual"
+
+MODE_CHOICES = [MODE_SUBTITLE, MODE_VISUAL, MODE_MANUAL_TRANSCRIPT, MODE_TIMESTAMP]
+AI_MODES = (MODE_SUBTITLE, MODE_VISUAL, MODE_MANUAL_TRANSCRIPT)
 
 PRESETS: dict[str, dict[str, str]] = {
     "OpenAI": {
@@ -236,13 +244,38 @@ def _run_job(
         if meta.duration:
             st.write(f"⏱️ Durasi video: {pipeline.format_timestamp(meta.duration)}")
 
-        if mode == "Timestamp manual":
+        local_source: Path | None = None
+
+        if mode == MODE_TIMESTAMP:
             start_s, end_s = pipeline.clamp_moment(
                 manual_start, manual_end, meta.duration, min_seconds=5.0
             )
             moment = pipeline.ClipMoment(start=start_s, end=end_s)
             st.write(f"Potongan manual: {moment.start_label} - {moment.end_label}")
-        elif mode == "AI + transkrip manual":
+        elif mode == MODE_VISUAL:
+            st.write("Mengunduh video sementara untuk analisis visual (tanpa subtitle)...")
+            source_path = pipeline.download_source_video(
+                url,
+                job,
+                expected_duration=meta.duration,
+                cookie_file=cookie_file,
+            )
+            local_source = source_path
+            moment = pipeline.analyze_video_frames(
+                source_path,
+                api_key=cfg["api_key"],
+                model=cfg["model"],
+                base_url=cfg["base_url"] or None,
+                clip_seconds=clip_seconds,
+                log=st.write,
+            )
+            st.write(
+                f"✅ Momen visual terpilih: **{moment.start_label} - {moment.end_label}**"
+                + (f" — {moment.title}" if moment.title else "")
+            )
+            if moment.reason:
+                st.write(f"Alasan: {moment.reason}")
+        elif mode == MODE_MANUAL_TRANSCRIPT:
             transcript = pipeline.normalize_transcript_text(transcript_text)
             st.write(
                 f"Transkrip yang ditempel: {len(transcript.splitlines())} baris bertimestamp, "
@@ -288,17 +321,30 @@ def _run_job(
             if moment.reason:
                 st.write(f"Alasan: {moment.reason}")
 
-        final_path = pipeline.make_clip(
-            url,
-            moment.start,
-            moment.end,
-            job,
-            cookie_file=cookie_file,
-            duration=meta.duration,
-            min_seconds=5.0 if mode == "Timestamp manual" else pipeline.MIN_CLIP_SECONDS,
-            max_seconds=clip_seconds if mode != "Timestamp manual" else pipeline.MAX_CLIP_SECONDS,
-            log=st.write,
-        )
+        if local_source is not None:
+            final_path = pipeline.make_clip_from_local(
+                local_source,
+                moment.start,
+                moment.end,
+                job,
+                min_seconds=pipeline.MIN_CLIP_SECONDS,
+                max_seconds=clip_seconds,
+                log=st.write,
+            )
+        else:
+            final_path = pipeline.make_clip(
+                url,
+                moment.start,
+                moment.end,
+                job,
+                cookie_file=cookie_file,
+                duration=meta.duration,
+                min_seconds=5.0 if mode == MODE_TIMESTAMP else pipeline.MIN_CLIP_SECONDS,
+                max_seconds=(
+                    clip_seconds if mode != MODE_TIMESTAMP else pipeline.MAX_CLIP_SECONDS
+                ),
+                log=st.write,
+            )
         data = final_path.read_bytes()
 
     st.session_state["clip"] = {
@@ -308,10 +354,10 @@ def _run_job(
         "duration": moment.duration,
         "title": moment.title,
         "reason": moment.reason,
-        "score": moment.score if mode != "Timestamp manual" else None,
+        "score": moment.score if mode != MODE_TIMESTAMP else None,
         "source_url": url,
         "video_title": meta.title,
-        "model": cfg["model"] if mode != "Timestamp manual" else "",
+        "model": cfg["model"] if mode != MODE_TIMESTAMP else "",
     }
 
 
@@ -383,19 +429,19 @@ def main() -> None:
 
     mode = st.radio(
         "Mode potong",
-        ["AI pilih momen", "AI + transkrip manual", "Timestamp manual"],
+        MODE_CHOICES,
         horizontal=True,
         help=(
-            "Jika subtitle YouTube kena HTTP 429, pilih AI + transkrip manual "
-            "dan tempel transkrip bertimestamp dari file .vtt/.srt."
+            "Pilih AI visual tanpa subtitle untuk memilih berdasarkan gambar saja; "
+            "butuh model AI vision/multimodal. Model ini tidak mendengar audio/dialogue."
         ),
     )
 
     transcript_text = ""
-    if mode in ("AI pilih momen", "AI + transkrip manual"):
+    if mode != MODE_TIMESTAMP:
         clip_seconds = float(st.slider("Target durasi klip (detik)", 20, 90, 45, step=5))
         manual_start = manual_end = ""
-        if mode == "AI + transkrip manual":
+        if mode == MODE_MANUAL_TRANSCRIPT:
             transcript_text = st.text_area(
                 "Transkrip bertimestamp (VTT/SRT atau [00:01:23] ucapan)",
                 height=220,
@@ -416,19 +462,26 @@ def main() -> None:
 
     run_clicked = st.button("🚀 Proses Klip Viral SONYBAE!", type="primary")
 
-    st.caption(
-        "Server hanya mengunduh bagian yang dipilih (bukan video penuh), "
-        "lalu crop ke 1080×1920. Hasil tidak disimpan permanen."
-    )
+    if mode == MODE_VISUAL:
+        st.caption(
+            f"Mode ini mengunduh sementara seluruh video (maks. {pipeline.MAX_VIDEO_ANALYSIS_MINUTES} menit / "
+            f"{pipeline.MAX_VIDEO_ANALYSIS_BYTES // (1024 * 1024)} MB), mengirim frame sampel saja ke model vision, "
+            "lalu memotong dari file lokal itu. File sumber dibuang setelah proses."
+        )
+    else:
+        st.caption(
+            "Server hanya mengunduh bagian yang dipilih (bukan video penuh), "
+            "lalu crop ke 1080×1920. Hasil tidak disimpan permanen."
+        )
 
     if run_clicked:
         try:
             clean_url = pipeline.validate_url(url)
-            if mode in ("AI pilih momen", "AI + transkrip manual") and not cfg["api_key"]:
+            if mode in AI_MODES and not cfg["api_key"]:
                 raise ValueError("API Key wajib diisi untuk mode AI.")
-            if mode in ("AI pilih momen", "AI + transkrip manual") and not cfg["model"]:
+            if mode in AI_MODES and not cfg["model"]:
                 raise ValueError("Nama model wajib diisi untuk mode AI.")
-            if mode in ("AI pilih momen", "AI + transkrip manual") and cfg["base_url"]:
+            if mode in AI_MODES and cfg["base_url"]:
                 # Validasi lebih awal agar endpoint custom tidak dapat menjadi SSRF.
                 pipeline.validate_base_url(cfg["base_url"])
             _process(

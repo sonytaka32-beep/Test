@@ -33,12 +33,26 @@ def test_app_has_configuration_widgets():
     assert "API Key" in labels
     assert "Base URL" in labels
     assert "Model" in labels
-    assert at.radio[0].value == "AI pilih momen"
+    assert at.radio[0].value == "AI pilih momen (subtitle YouTube)"
     assert list(at.radio[0].options) == [
-        "AI pilih momen",
+        "AI pilih momen (subtitle YouTube)",
+        "AI visual (tanpa subtitle)",
         "AI + transkrip manual",
         "Timestamp manual",
     ]
+
+
+def test_visual_mode_hides_transcript_box_and_requires_key():
+    at = _fresh_app().run()
+    at.radio[0].set_value("AI visual (tanpa subtitle)").run()
+    assert not any(
+        widget.label.startswith("Transkrip bertimestamp") for widget in at.text_area
+    )
+    at.text_input[0].set_value("https://youtu.be/abc123")
+    primary = next(button for button in at.button if button.label.startswith("🚀"))
+    primary.click().run()
+    assert not at.exception
+    assert any("api key" in str(err.value).lower() for err in at.error)
 
 
 def test_app_blocks_empty_url():

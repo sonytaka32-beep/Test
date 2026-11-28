@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import pipeline
@@ -350,6 +352,62 @@ def test_manual_clip_bounds_are_preserved_at_pipeline_boundary(monkeypatch, tmp_
     assert result.read_bytes() == b"fake mp4"
 
 
+def test_crop_to_vertical_seeks_only_the_clip_range(monkeypatch, tmp_path):
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        Path(cmd[-1]).write_bytes(b"x" * 30_000)
+        return Result()
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"width": 1920, "height": 1080, "duration": 600, "rotation": 0},
+    )
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+
+    pipeline.crop_to_vertical(source, tmp_path / "out.mp4", start=60.0, end=100.0)
+
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("-ss") + 1] == "60.000"
+    assert cmd[cmd.index("-t") + 1] == "40.000"
+    assert cmd[cmd.index("-i") + 1] == str(source)
+
+
+def test_make_clip_from_local_skips_second_download(monkeypatch, tmp_path):
+    called = {}
+
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"width": 1280, "height": 720, "duration": 300, "rotation": 0},
+    )
+
+    def fake_crop(source, destination, **kwargs):
+        called["crop"] = (source, kwargs)
+        destination.write_bytes(b"mp4")
+        return destination
+
+    monkeypatch.setattr(pipeline, "crop_to_vertical", fake_crop)
+
+    source = tmp_path / "visual_source.mp4"
+    source.write_bytes(b"video")
+
+    result = pipeline.make_clip_from_local(source, 10, 50, tmp_path)
+
+    assert called["crop"][0] == source
+    assert called["crop"][1] == {"start": 10.0, "end": 50.0}
+    assert result.read_bytes() == b"mp4"
+
+
 # --- URL --------------------------------------------------------------------
 
 
@@ -407,3 +465,141 @@ def test_crop_filter_odd_height_is_made_even():
 def test_target_constants():
     assert (pipeline.TARGET_W, pipeline.TARGET_H) == (1080, 1920)
     assert pipeline.TARGET_W * 16 == pipeline.TARGET_H * 9
+
+
+# --- Analisis visual tanpa subtitle ----------------------------------------
+
+
+def _fake_client(captured, content):
+    from types import SimpleNamespace
+
+    class Completions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+
+
+def test_chat_attaches_images_as_data_urls():
+    captured = {}
+    client = _fake_client(captured, '{"ok": true}')
+
+    pipeline._chat(
+        client,
+        "vision-model",
+        "pilih momen",
+        temperature=0,
+        images=["QUJD", "REVG"],
+    )
+
+    content = captured["messages"][1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "pilih momen"}
+    assert content[1]["image_url"]["url"] == "data:image/jpeg;base64,QUJD"
+    assert content[2]["image_url"]["url"] == "data:image/jpeg;base64,REVG"
+
+
+def test_chat_without_images_keeps_plain_string_message():
+    captured = {}
+    client = _fake_client(captured, '{"ok": true}')
+
+    pipeline._chat(client, "text-model", "pilih momen", temperature=0)
+
+    assert captured["messages"][1]["content"] == "pilih momen"
+
+
+def test_analyze_video_frames_parses_and_clamps_ai_reply(monkeypatch):
+    seen = {}
+
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"duration": 600.0, "width": 1280, "height": 720, "rotation": 0},
+    )
+    monkeypatch.setattr(
+        pipeline, "_video_analysis_frames", lambda path: (["QUJD", "REVG"], [0.0, 300.0])
+    )
+    monkeypatch.setattr(pipeline, "_make_client", lambda key, base: "client")
+
+    def fake_chat(client, model, prompt, **kwargs):
+        seen["images"] = kwargs.get("images")
+        seen["prompt"] = prompt
+        return '{"start":"00:05:00","end":"00:05:40","judul":"Aksi","alasan":"gerakan jelas","skor":88}'
+
+    monkeypatch.setattr(pipeline, "_chat", fake_chat)
+
+    moment = pipeline.analyze_video_frames(
+        Path("sample.mp4"), api_key="k", model="vision", clip_seconds=40
+    )
+
+    assert moment.start == 300.0
+    assert moment.end == 340.0
+    assert moment.title == "Aksi"
+    assert moment.score == 88
+    assert seen["images"] == ["QUJD", "REVG"]
+    assert "tanpa" in seen["prompt"].lower() or "frame" in seen["prompt"].lower()
+
+
+def test_analyze_video_frames_reports_unsupported_model(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"duration": 600.0, "width": 1280, "height": 720, "rotation": 0},
+    )
+    monkeypatch.setattr(
+        pipeline, "_video_analysis_frames", lambda path: (["QUJD", "REVG"], [0.0, 300.0])
+    )
+    monkeypatch.setattr(pipeline, "_make_client", lambda key, base: "client")
+
+    def boom(client, model, prompt, **kwargs):
+        raise pipeline.AIError("Panggilan AI gagal: 400 unsupported content type")
+
+    monkeypatch.setattr(pipeline, "_chat", boom)
+
+    with pytest.raises(pipeline.AIError, match="vision"):
+        pipeline.analyze_video_frames(Path("sample.mp4"), api_key="k", model="text-only")
+
+
+def test_analyze_video_frames_rejects_long_video(monkeypatch):
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"duration": 3600.0, "width": 1280, "height": 720, "rotation": 0},
+    )
+
+    with pytest.raises(pipeline.EncodeError, match="maksimal"):
+        pipeline.analyze_video_frames(Path("sample.mp4"), api_key="k", model="vision")
+
+
+def test_video_analysis_frames_are_capped(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"duration": pipeline.MAX_VIDEO_ANALYSIS_MINUTES * 60.0,
+                      "width": 1280, "height": 720, "rotation": 0},
+    )
+    calls = {"count": 0}
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls["count"] += 1
+        Path(cmd[-1]).write_bytes(b"frame-bytes")
+        return Result()
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+
+    frames, times = pipeline._video_analysis_frames(tmp_path / "video.mp4")
+
+    assert len(frames) == pipeline.VIDEO_ANALYSIS_MAX_FRAMES
+    assert len(times) == len(frames)
+    assert calls["count"] == pipeline.VIDEO_ANALYSIS_MAX_FRAMES
+    assert all(0 <= timestamp <= pipeline.MAX_VIDEO_ANALYSIS_MINUTES * 60 for timestamp in times)
+    assert times[0] > 0
+    assert times[-1] > pipeline.MAX_VIDEO_ANALYSIS_MINUTES * 60 * 0.9

@@ -158,6 +158,88 @@ def test_download_section_retries_with_other_client_on_403(monkeypatch, tmp_path
     assert seen[0] != seen[1]
 
 
+def test_download_source_video_explains_max_filesize(monkeypatch, tmp_path):
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "ERROR: File is larger than max-filesize (999999999 bytes > 300000000 bytes)"
+
+    monkeypatch.setattr(pipeline, "_run", lambda *args, **kwargs: Result())
+
+    with pytest.raises(pipeline.DownloadError, match="melewati batas"):
+        pipeline.download_source_video(
+            "https://youtu.be/abc123", tmp_path, expected_duration=300.0
+        )
+
+
+def test_download_source_video_rejects_long_video_before_download(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(pipeline, "_run", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(pipeline.DownloadError, match="dibatasi"):
+        pipeline.download_source_video(
+            "https://youtu.be/abc123",
+            tmp_path,
+            expected_duration=pipeline.MAX_VIDEO_ANALYSIS_MINUTES * 60 + 1,
+        )
+
+    assert calls == []
+
+
+def test_download_source_video_caps_height_and_file_size(monkeypatch, tmp_path):
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        (tmp_path / "visual_source.mp4").write_bytes(b"x" * 60_000)
+        return Result()
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path: {"duration": 300.0, "width": 1280, "height": 720, "rotation": 0},
+    )
+
+    output = pipeline.download_source_video(
+        "https://youtu.be/abc123", tmp_path, expected_duration=300.0
+    )
+
+    assert output.exists()
+    fmt = captured["cmd"][captured["cmd"].index("-f") + 1]
+    assert f"height<={pipeline.MAX_VIDEO_ANALYSIS_HEIGHT}" in fmt
+    assert "--max-filesize" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--max-filesize") + 1] == str(
+        pipeline.MAX_VIDEO_ANALYSIS_BYTES
+    )
+
+
+def test_download_source_video_removes_oversized_file(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        (tmp_path / "visual_source.mp4").write_bytes(b"x" * 60_000)
+        return Result()
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    monkeypatch.setattr(pipeline, "MAX_VIDEO_ANALYSIS_BYTES", 10_000)
+
+    with pytest.raises(pipeline.DownloadError, match="melewati batas"):
+        pipeline.download_source_video(
+            "https://youtu.be/abc123", tmp_path, expected_duration=300.0
+        )
+
+    assert not (tmp_path / "visual_source.mp4").exists()
+
+
 def test_make_client_validates_before_constructing_openai(monkeypatch):
     called = {"value": False}
 

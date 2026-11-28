@@ -1,12 +1,13 @@
 # SONYBAE CLIPS
 
-Aplikasi Streamlit untuk mencari momen dari subtitle video YouTube, memotong bagian itu saja, lalu mengekspor klip vertikal 9:16 (1080×1920, H.264/AAC).
+Aplikasi Streamlit untuk mencari momen dari video YouTube (subtitle, transkrip tempelan, atau analisis visual tanpa subtitle), memotong bagian itu saja, lalu mengekspor klip vertikal 9:16 (1080×1920, H.264/AAC).
 
 ## Fitur
 
 - Kompatibel dengan endpoint OpenAI-style: OpenAI, DeepSeek, NVIDIA NIM, OpenRouter, dan endpoint kustom.
 - AI memilih kandidat momen dari subtitle; tersedia AI + transkrip bertimestamp yang ditempel pengguna dan mode timestamp manual bila YouTube membatasi subtitle.
-- Mengunduh bagian terpilih saja via `yt-dlp --download-sections`, bukan seluruh video.
+- **AI visual (tanpa subtitle)**: mengunduh video sementara, mengirim frame sampel ke model vision, lalu memotong klip dari file lokal tanpa transkrip/audio. Membutuhkan model multimodal.
+- Mengunduh bagian terpilih saja via `yt-dlp --download-sections`, bukan seluruh video (kecuali mode AI visual).
 - Crop tengah menjadi 1080×1920 dan encode MP4 yang siap diunduh.
 - Direktori kerja sementara unik dan otomatis dihapus setelah tiap proses; hasil klip dibatasi 100 MB per unduhan.
 - Mendukung cookies YouTube opsional untuk kondisi server terkena pemeriksaan bot.
@@ -79,6 +80,7 @@ Tes unit dan smoke-test UI tidak memanggil YouTube atau provider AI. GitHub Acti
 
 - Hanya URL domain YouTube yang diterima.
 - Mode AI memerlukan subtitle atau transkrip bertimestamp (format VTT/SRT atau baris `[HH:MM:SS] ucapan`); jika subtitle YouTube dibatasi, tempel transkrip sendiri atau pilih mode timestamp manual.
+- Mode **AI visual (tanpa subtitle)** tidak memakai subtitle/audio sama sekali: momen dipilih dari frame gambar. Karena itu ia bisa melewatkan momen yang lucu/penting hanya dari ucapan. Batasnya video maksimal 12 menit dan 300 MB, dan model AI harus mendukung input gambar (vision); model teks saja akan ditolak dengan pesan jelas. Model vision yang tidak mendukung ini akan gagal dan aplikasi menyarankan mode lain.
 - Unduhan klip memilih stream HTTPS (video+audio terpisah atau satu stream muxed) agar FFmpeg tidak mengambil potongan HLS langsung; jika YouTube tidak menyediakan format HTTPS untuk server tersebut, proses berhenti dengan pesan yang jelas. Kualitas maksimum bergantung pada format yang tersedia.
 - Server YouTube bisa membatasi IP cloud atau mengubah cara akses subtitle/video. Error HTTP 429 berarti permintaan subtitle dibatasi YouTube, bukan berarti subtitle pasti tidak ada atau API key AI bermasalah. Error HTTP 403 saat unduh video berarti YouTube menolak akses stream dari server; aplikasi sudah mencoba mengeluarkan client `web_embedded` (yang dibatasi PO token) dan client cadangan, tetapi bila tetap 403, jangan mengulang berkali-kali—coba lagi setelah jeda atau pakai cookie milik akun sendiri.
 - Video diunduh/diproses oleh server, sehingga perlu mempertimbangkan kuota, ruang sementara, batas ukuran upload/download, dan ketentuan layanan YouTube serta hak cipta. Gunakan hanya konten yang Anda miliki atau berhak proses.
