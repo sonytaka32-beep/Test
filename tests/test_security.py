@@ -240,6 +240,54 @@ def test_download_source_video_removes_oversized_file(monkeypatch, tmp_path):
     assert not (tmp_path / "visual_source.mp4").exists()
 
 
+class _FakeUpload:
+    def __init__(self, name: str, data: bytes):
+        self.name = name
+        self._data = data
+
+    def getbuffer(self):
+        return memoryview(self._data)
+
+
+def _fake_probe(duration=300.0):
+    return {"width": 1280, "height": 720, "duration": duration, "rotation": 0}
+
+
+def test_save_uploaded_video_writes_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "probe_video", lambda path: _fake_probe())
+
+    saved = pipeline.save_uploaded_video(_FakeUpload("klip.mp4", b"x" * 2048), tmp_path)
+
+    assert saved == tmp_path / "uploaded_video.mp4"
+    assert saved.read_bytes() == b"x" * 2048
+
+
+def test_save_uploaded_video_rejects_bad_extension(tmp_path):
+    with pytest.raises(pipeline.DownloadError, match="Format file"):
+        pipeline.save_uploaded_video(_FakeUpload("notes.txt", b"abc"), tmp_path)
+
+
+def test_save_uploaded_video_rejects_empty_and_oversized(monkeypatch, tmp_path):
+    with pytest.raises(pipeline.DownloadError, match="kosong"):
+        pipeline.save_uploaded_video(_FakeUpload("a.mp4", b""), tmp_path)
+
+    monkeypatch.setattr(pipeline, "MAX_UPLOAD_VIDEO_BYTES", 10)
+    with pytest.raises(pipeline.DownloadError, match="melebihi batas"):
+        pipeline.save_uploaded_video(_FakeUpload("a.mp4", b"x" * 100), tmp_path)
+
+
+def test_save_uploaded_video_removes_long_and_unreadable_files(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        pipeline, "MAX_VIDEO_ANALYSIS_MINUTES", 1
+    )
+    monkeypatch.setattr(pipeline, "probe_video", lambda path: _fake_probe(duration=120))
+
+    with pytest.raises(pipeline.EncodeError, match="maksimal"):
+        pipeline.save_uploaded_video(_FakeUpload("a.mp4", b"x" * 100), tmp_path)
+
+    assert not (tmp_path / "uploaded_video.mp4").exists()
+
+
 def test_make_client_validates_before_constructing_openai(monkeypatch):
     called = {"value": False}
 

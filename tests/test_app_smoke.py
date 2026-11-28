@@ -37,9 +37,28 @@ def test_app_has_configuration_widgets():
     assert list(at.radio[0].options) == [
         "AI pilih momen (subtitle YouTube)",
         "AI visual (tanpa subtitle)",
+        "Upload video sendiri (tanpa YouTube)",
         "AI + transkrip manual",
         "Timestamp manual",
     ]
+
+
+def test_upload_mode_requires_a_file():
+    at = _fresh_app().run()
+    at.radio[0].set_value("Upload video sendiri (tanpa YouTube)").run()
+    assert not at.exception
+    primary = next(button for button in at.button if button.label.startswith("🚀"))
+    primary.click().run()
+    assert not at.exception
+    assert any("file video" in str(err.value).lower() for err in at.error)
+
+
+def test_upload_mode_shows_file_uploader():
+    at = _fresh_app().run()
+    assert len(at.get("file_uploader")) == 0
+    at.radio[0].set_value("Upload video sendiri (tanpa YouTube)").run()
+    assert not at.exception
+    assert len(at.get("file_uploader")) == 1
 
 
 def test_visual_mode_shows_fallback_caption_if_server_pipeline_is_stale(monkeypatch):
@@ -50,7 +69,7 @@ def test_visual_mode_shows_fallback_caption_if_server_pipeline_is_stale(monkeypa
     at.radio[0].set_value("AI visual (tanpa subtitle)").run()
 
     assert not at.exception
-    assert any("maks. 12 menit / 300 MB" in str(item.value) for item in at.caption)
+    assert any("maks. 60 menit / 300 MB" in str(item.value) for item in at.caption)
 
 
 def test_visual_mode_reports_missing_pipeline_functions_clearly(monkeypatch):
@@ -101,6 +120,16 @@ def test_app_rejects_non_youtube_url():
     at.button[0].click().run()
     assert not at.exception
     assert any("youtube" in str(err.value).lower() for err in at.error)
+
+
+def test_humanize_403_download_error_points_to_upload_mode():
+    error = pipeline.DownloadError(
+        "YouTube menolak unduhan video penuh dari server Streamlit (HTTP 403). "
+        "Gunakan mode 'Upload video sendiri'."
+    )
+    message = app._humanize_error(error)
+    assert "Upload video sendiri" in message
+    assert "Cookies YouTube di sidebar" not in message
 
 
 def test_humanize_transcript_error_does_not_mislabel_http_429():

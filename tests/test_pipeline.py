@@ -567,7 +567,7 @@ def test_analyze_video_frames_rejects_long_video(monkeypatch):
     monkeypatch.setattr(
         pipeline,
         "probe_video",
-        lambda path: {"duration": 3600.0, "width": 1280, "height": 720, "rotation": 0},
+        lambda path: {"duration": 3601.0, "width": 1280, "height": 720, "rotation": 0},
     )
 
     with pytest.raises(pipeline.EncodeError, match="maksimal"):

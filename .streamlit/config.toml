@@ -3,7 +3,8 @@ primaryColor = "#ff2d2d"
 base = "light"
 
 [server]
-# Aplikasi ini tidak menerima upload file; batas body dibuat konservatif.
+# Mode "Upload video sendiri" mengunggah file video; batas ini selaras dengan
+# MAX_UPLOAD_VIDEO_BYTES (100 MB) di pipeline.py.
 maxUploadSize = 100
 
 [browser]

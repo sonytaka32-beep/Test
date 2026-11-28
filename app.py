@@ -12,17 +12,31 @@ import streamlit as st
 
 import pipeline
 
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 
 MODE_SUBTITLE = "AI pilih momen (subtitle YouTube)"
 MODE_VISUAL = "AI visual (tanpa subtitle)"
+MODE_UPLOAD = "Upload video sendiri (tanpa YouTube)"
 MODE_MANUAL_TRANSCRIPT = "AI + transkrip manual"
 MODE_TIMESTAMP = "Timestamp manual"
 
-MODE_CHOICES = [MODE_SUBTITLE, MODE_VISUAL, MODE_MANUAL_TRANSCRIPT, MODE_TIMESTAMP]
-AI_MODES = (MODE_SUBTITLE, MODE_VISUAL, MODE_MANUAL_TRANSCRIPT)
-VISUAL_MAX_MINUTES = 12
+MODE_CHOICES = [
+    MODE_SUBTITLE,
+    MODE_VISUAL,
+    MODE_UPLOAD,
+    MODE_MANUAL_TRANSCRIPT,
+    MODE_TIMESTAMP,
+]
+AI_MODES = (
+    MODE_SUBTITLE,
+    MODE_VISUAL,
+    MODE_UPLOAD,
+    MODE_MANUAL_TRANSCRIPT,
+)
+VISUAL_MAX_MINUTES = 60
 VISUAL_MAX_SIZE_MB = 300
+UPLOAD_MAX_SIZE_MB = 100
+
 
 PRESETS: dict[str, dict[str, str]] = {
     "OpenAI": {
@@ -231,24 +245,52 @@ def _run_job(
     manual_start: str,
     manual_end: str,
     transcript_text: str = "",
+    uploaded_file: Any = None,
 ) -> None:
     with pipeline.job_dir() as job:
         cookie_file = _cookie_file(job)
+        local_source: Path | None = None
 
-        st.write("Membaca metadata video...")
-        meta = pipeline.fetch_metadata(url, cookie_file=cookie_file)
-        if meta.is_live:
-            raise pipeline.DownloadError(
-                "Video ini masih live. Tunggu sampai selesai, lalu proses ulang."
+        if uploaded_file is not None:
+            st.write("Menyimpan video yang diunggah...")
+            local_source = pipeline.save_uploaded_video(uploaded_file, job)
+            info = pipeline.probe_video(local_source)
+            meta = pipeline.VideoMeta(
+                title=Path(str(getattr(uploaded_file, "name", ""))).stem
+                or "Video unggahan",
+                duration=info.get("duration"),
             )
+        else:
+            st.write("Membaca metadata video...")
+            meta = pipeline.fetch_metadata(url, cookie_file=cookie_file)
+            if meta.is_live:
+                raise pipeline.DownloadError(
+                    "Video ini masih live. Tunggu sampai selesai, lalu proses ulang."
+                )
+
         if meta.title:
             st.write(f"🎙️ **{meta.title}**")
         if meta.duration:
             st.write(f"⏱️ Durasi video: {pipeline.format_timestamp(meta.duration)}")
 
-        local_source: Path | None = None
+        if local_source is not None:
+            st.write("AI memilih momen dari gambar video (tanpa subtitle)...")
+            moment = pipeline.analyze_video_frames(
+                local_source,
+                api_key=cfg["api_key"],
+                model=cfg["model"],
+                base_url=cfg["base_url"] or None,
+                clip_seconds=clip_seconds,
+                log=st.write,
+            )
+            st.write(
+                f"✅ Momen visual terpilih: **{moment.start_label} - {moment.end_label}**"
+                + (f" — {moment.title}" if moment.title else "")
+            )
+            if moment.reason:
+                st.write(f"Alasan: {moment.reason}")
+        elif mode == MODE_TIMESTAMP:
 
-        if mode == MODE_TIMESTAMP:
             start_s, end_s = pipeline.clamp_moment(
                 manual_start, manual_end, meta.duration, min_seconds=5.0
             )
@@ -378,6 +420,7 @@ def _process(
     manual_start: str,
     manual_end: str,
     transcript_text: str = "",
+    uploaded_file: Any = None,
 ) -> None:
     st.session_state.pop("clip", None)
     pipeline.cleanup_stale_jobs()
@@ -392,6 +435,7 @@ def _process(
                 manual_start,
                 manual_end,
                 transcript_text,
+                uploaded_file,
             )
         except Exception:
             status.update(label="Gagal memproses", state="error", expanded=True)
@@ -404,6 +448,11 @@ def _humanize_error(exc: Exception) -> str:
     if isinstance(exc, pipeline.TranscriptError):
         return message
     if isinstance(exc, pipeline.DownloadError):
+        if "Upload video sendiri" in message:
+            return (
+                f"{message}\n\n**Solusi:** pilih mode **Upload video sendiri "
+                "(tanpa YouTube)**, lalu unggah file video yang Anda miliki."
+            )
         return f"{message}\n\n**Solusi:** isi Cookies YouTube di sidebar, lalu coba lagi."
     if isinstance(exc, pipeline.AIError):
         return f"{message}\n\n**Solusi:** cek API Key, Base URL, dan nama model di sidebar."
@@ -441,10 +490,22 @@ def main() -> None:
         MODE_CHOICES,
         horizontal=True,
         help=(
-            "Pilih AI visual tanpa subtitle untuk memilih berdasarkan gambar saja; "
-            "butuh model AI vision/multimodal. Model ini tidak mendengar audio/dialogue."
+            "Jika server kena HTTP 403 dari YouTube, pilih Upload video sendiri: "
+            "unduh videonya lewat aplikasi YouTube di HP, lalu unggah file itu. "
+            "Mode AI visual butuh model AI vision/multimodal dan tidak mendengar audio."
         ),
     )
+
+    uploaded_file = None
+    if mode == MODE_UPLOAD:
+        uploaded_file = st.file_uploader(
+            "Upload file video (dari HP/PC)",
+            type=["mp4", "mov", "m4v", "mkv", "webm"],
+            help=(
+                f"Maksimal {UPLOAD_MAX_SIZE_MB} MB. Video diunggah hanya ke sesi server ini "
+                "dan file kerja dibuang setelah proses."
+            ),
+        )
 
     transcript_text = ""
     if mode != MODE_TIMESTAMP:
@@ -471,7 +532,13 @@ def main() -> None:
 
     run_clicked = st.button("🚀 Proses Klip Viral SONYBAE!", type="primary")
 
-    if mode == MODE_VISUAL:
+    if mode == MODE_UPLOAD:
+        st.caption(
+            f"Video diunggah ke server (maks. {UPLOAD_MAX_SIZE_MB} MB / "
+            f"{VISUAL_MAX_MINUTES} menit), AI memilih momen dari gambar, lalu dipotong 1080×1920. "
+            "Tidak ada permintaan unduh ke YouTube, jadi tidak kena blokir HTTP 403."
+        )
+    elif mode == MODE_VISUAL:
         analysis_limit_minutes = getattr(
             pipeline, "MAX_VIDEO_ANALYSIS_MINUTES", VISUAL_MAX_MINUTES
         )
@@ -491,7 +558,14 @@ def main() -> None:
 
     if run_clicked:
         try:
-            clean_url = pipeline.validate_url(url)
+            if mode == MODE_UPLOAD:
+                if uploaded_file is None:
+                    raise ValueError(
+                        "Pilih file video yang akan diunggah terlebih dahulu."
+                    )
+                clean_url = ""
+            else:
+                clean_url = pipeline.validate_url(url)
             if mode in AI_MODES and not cfg["api_key"]:
                 raise ValueError("API Key wajib diisi untuk mode AI.")
             if mode in AI_MODES and not cfg["model"]:
@@ -507,6 +581,7 @@ def main() -> None:
                 manual_start,
                 manual_end,
                 transcript_text,
+                uploaded_file,
             )
         except Exception as exc:  # noqa: BLE001 - semua error ditampilkan ke pengguna
             st.error(_humanize_error(exc))
@@ -518,7 +593,8 @@ def main() -> None:
     st.divider()
     st.caption(
         "SONYBAE CLIPS · untuk konten podcast/live stream vertikal. "
-        "Hanya link YouTube yang diproses; API key hanya berada di state sesi sampai dihapus atau sesi berakhir."
+        "Link YouTube atau file yang Anda unggah sendiri; API key hanya berada di state sesi "
+        "sampai dihapus atau sesi berakhir."
     )
 
 

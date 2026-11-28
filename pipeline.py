@@ -42,11 +42,13 @@ MAX_CHUNKS = 8
 MIN_CHUNK_CHARS = 4_000
 
 # Analisis tanpa subtitle mengunduh video penuh sementara, lalu mengirim frame saja.
-MAX_VIDEO_ANALYSIS_MINUTES = 12
+MAX_VIDEO_ANALYSIS_MINUTES = 60
 MAX_VIDEO_ANALYSIS_BYTES = 300 * 1024 * 1024
+MAX_UPLOAD_VIDEO_BYTES = 100 * 1024 * 1024
+SUPPORTED_UPLOAD_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".webm"}
 VIDEO_ANALYSIS_SAMPLE_SECONDS = 30
 VIDEO_ANALYSIS_FRAME_MAX_BYTES = 180_000
-VIDEO_ANALYSIS_MAX_FRAMES = 24
+VIDEO_ANALYSIS_MAX_FRAMES = 48
 VIDEO_ANALYSIS_MAX_TOTAL_BYTES = 4 * 1024 * 1024
 
 # Kode bahasa PERSIS. Jangan pakai wildcard ("en.*"): itu ikut mengunduh
@@ -1188,6 +1190,45 @@ def download_transcript(
     )
 
 
+def save_uploaded_video(uploaded_file: Any, workdir: Path) -> Path:
+    """Simpan unggahan video ke job sementara dengan batas ekstensi dan ukuran."""
+    filename = str(getattr(uploaded_file, "name", ""))
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUPPORTED_UPLOAD_VIDEO_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_UPLOAD_VIDEO_EXTENSIONS))
+        raise DownloadError(f"Format file video tidak didukung. Gunakan: {supported}.")
+    try:
+        content = uploaded_file.getbuffer()
+    except AttributeError:
+        content = uploaded_file.read()
+    size = len(content)
+    if size <= 0:
+        raise DownloadError("File video yang dipilih kosong.")
+    if size > MAX_UPLOAD_VIDEO_BYTES:
+        raise DownloadError(
+            "Ukuran file video melebihi batas upload "
+            f"{MAX_UPLOAD_VIDEO_BYTES // (1024 * 1024)} MB."
+        )
+
+    output = workdir / f"uploaded_video{suffix}"
+    output.write_bytes(bytes(content))
+    try:
+        info = probe_video(output)
+    except SonybaeError:
+        output.unlink(missing_ok=True)
+        raise
+    duration = info.get("duration")
+    if duration is None or not math.isfinite(duration) or duration <= 0:
+        output.unlink(missing_ok=True)
+        raise EncodeError("Durasi file video tidak terbaca.")
+    if duration > MAX_VIDEO_ANALYSIS_MINUTES * 60:
+        output.unlink(missing_ok=True)
+        raise EncodeError(
+            f"Mode AI visual dibatasi untuk video maksimal {MAX_VIDEO_ANALYSIS_MINUTES} menit."
+        )
+    return output
+
+
 def download_source_video(
     url: str,
     workdir: Path,
@@ -1264,8 +1305,9 @@ def download_source_video(
     if _is_http_403(last_error):
         raise DownloadError(
             "YouTube menolak unduhan video penuh dari server Streamlit (HTTP 403). "
-            "Mode tanpa subtitle tidak dapat berjalan dari host ini; gunakan timestamp "
-            "manual atau upload/olah file yang Anda miliki di server yang Anda kendalikan."
+            "Ini pembatasan dari YouTube untuk IP server, bukan kesalahan pengaturan. "
+            "Gunakan mode 'Upload video sendiri': unduh videonya lewat aplikasi YouTube "
+            "di HP, lalu unggah file itu ke aplikasi ini."
         )
     if _is_no_formats(last_error):
         raise DownloadError(
